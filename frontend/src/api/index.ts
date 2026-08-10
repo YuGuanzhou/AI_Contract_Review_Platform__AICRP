@@ -49,29 +49,33 @@ service.interceptors.response.use(
   },
   async (error) => {
     const { response, config } = error
-    
+
     // 处理 HTTP 错误
     if (response) {
       const { status, data } = response
-      
+
+      // 登录/刷新接口的 401 是「凭据错误」，不是 token 过期，
+      // 直接交给调用方（Login.vue）提示，避免双重提示「登录已过期」+「用户名或密码错误」
+      const isAuthEndpoint =
+        typeof config?.url === 'string' &&
+        (config.url.includes('/auth/login') || config.url.includes('/auth/refresh'))
+
       switch (status) {
         case 401:
+          if (isAuthEndpoint) {
+            return Promise.reject(error)
+          }
           // token 过期，尝试刷新
           if (!config._retry) {
             config._retry = true
-            try {
-              await refreshToken()
+            const refreshed = await refreshToken()
+            if (refreshed) {
               return service(config)
-            } catch (refreshError) {
-              // 刷新失败，跳转到登录页
-              ElMessage.error('登录已过期，请重新登录')
-              router.push('/login')
-              return Promise.reject(refreshError)
             }
-          } else {
-            ElMessage.error('登录已过期，请重新登录')
-            router.push('/login')
           }
+          // 刷新失败（或重试后仍 401），跳转登录页
+          ElMessage.error('登录已过期，请重新登录')
+          router.push('/login')
           break
           
         case 403:

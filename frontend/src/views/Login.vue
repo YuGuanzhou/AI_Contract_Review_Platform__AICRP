@@ -153,9 +153,13 @@ const handleLogin = async () => {
     // 跳转到首页或重定向页面
     const redirect = router.currentRoute.value.query.redirect as string
     router.push(redirect || '/dashboard')
-  } catch (error) {
+  } catch (error: any) {
     console.error('登录失败:', error)
-    ElMessage.error('用户名或密码错误')
+    // 仅 401（用户名或密码错误）在此提示；其他错误已由全局拦截器统一提示，避免重复
+    if (error?.response?.status === 401) {
+      const detail = error?.response?.data?.detail
+      ElMessage.error(detail || '用户名或密码错误')
+    }
   } finally {
     loading.value = false
   }
