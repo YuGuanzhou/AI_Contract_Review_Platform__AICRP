@@ -89,6 +89,25 @@
             <div v-html="contract.review_summary"></div>
           </el-card>
           <el-empty v-else description="暂无AI分析结果" :image-size="100" />
+
+          <!-- 详细风险点列表 -->
+          <div class="risk-points" v-if="riskPoints.length">
+            <h4>详细风险点（{{ riskPoints.length }} 项）</h4>
+            <div v-for="(risk, index) in riskPoints" :key="index" class="risk-point-item">
+              <div class="risk-point-header">
+                <el-tag :type="riskTagType(risk['风险等级'] || risk.risk_level)" size="small">
+                  {{ riskLevelText(risk['风险等级'] || risk.risk_level) }}
+                </el-tag>
+                <span class="risk-point-location">
+                  {{ risk['条款位置'] || risk.clause_location || risk.clause_reference || risk.clause || `风险点 ${index + 1}` }}
+                </span>
+              </div>
+              <p class="risk-point-desc">{{ risk['风险描述'] || risk.risk_description || risk.description }}</p>
+              <p class="risk-point-suggestion" v-if="risk['修改建议'] || risk.modification_suggestion || risk.suggestion">
+                <span class="suggestion-label">修改建议：</span>{{ risk['修改建议'] || risk.modification_suggestion || risk.suggestion }}
+              </p>
+            </div>
+          </div>
         </div>
 
         <div class="review-history" v-if="reviewTimeline.length > 0">
@@ -117,7 +136,7 @@ import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Document } from '@element-plus/icons-vue'
 import PdfPreviewSimpleFixed from '@/components/PdfPreviewSimpleFixed.vue'
-import { getContract, getContractReviews } from '@/api/contract'
+import { getContract, getContractReviews, getContractReviewDetails } from '@/api/contract'
 import { startReview } from '@/api/reviewer'
 import type { Contract, ContractReviewRecord } from '@/api/contract'
 import { ElMessage } from 'element-plus'
@@ -173,6 +192,9 @@ const contract = ref<Contract & {
 
 // 审核时间线（由审核记录动态生成）
 const reviewTimeline = ref<TimelineItem[]>([])
+
+// AI 审核详细风险点（条款位置/风险描述/风险等级/修改建议）
+const riskPoints = ref<any[]>([])
 
 // 加载状态
 const loading = ref(false)
@@ -337,13 +359,22 @@ const fetchContractDetail = async () => {
       aiAnalysis: contractData.review_summary || '<p>暂无AI分析结果</p>'
     }
 
-    // 加载审核记录（失败不影响合同详情展示）
-    try {
-      const reviewData = await getContractReviews(Number(id))
-      reviewTimeline.value = buildReviewTimeline(reviewData.reviews || [])
-    } catch (e: any) {
-      console.warn('加载审核记录失败:', e)
+    // 并行加载审核记录 + 详细风险点（失败不影响合同详情展示）
+    const [reviewResult, detailsResult] = await Promise.allSettled([
+      getContractReviews(Number(id)),
+      getContractReviewDetails(Number(id)),
+    ])
+    if (reviewResult.status === 'fulfilled') {
+      reviewTimeline.value = buildReviewTimeline(reviewResult.value.reviews || [])
+    } else {
+      console.warn('加载审核记录失败:', reviewResult.reason)
       reviewTimeline.value = []
+    }
+    if (detailsResult.status === 'fulfilled') {
+      riskPoints.value = detailsResult.value.risk_points || []
+    } else {
+      console.warn('加载风险点失败:', detailsResult.reason)
+      riskPoints.value = []
     }
   } catch (error: any) {
     console.error('获取合同详情失败:', error)
@@ -515,6 +546,58 @@ export default {
 
       .summary-card {
         margin-top: 12px;
+      }
+
+      .risk-points {
+        margin-top: 24px;
+
+        h4 {
+          margin-bottom: 12px;
+          color: #303133;
+        }
+      }
+
+      .risk-point-item {
+        padding: 12px 14px;
+        margin-bottom: 12px;
+        border: 1px solid #ebeef5;
+        border-radius: 6px;
+        background: #fafafa;
+
+        &:last-child {
+          margin-bottom: 0;
+        }
+      }
+
+      .risk-point-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 8px;
+
+        .risk-point-location {
+          font-size: 14px;
+          font-weight: 600;
+          color: #303133;
+        }
+      }
+
+      .risk-point-desc {
+        font-size: 14px;
+        line-height: 1.6;
+        color: #606266;
+        margin: 0 0 6px;
+      }
+
+      .risk-point-suggestion {
+        font-size: 13px;
+        line-height: 1.6;
+        color: #b88230;
+        margin: 0;
+
+        .suggestion-label {
+          font-weight: 600;
+        }
       }
     }
   }

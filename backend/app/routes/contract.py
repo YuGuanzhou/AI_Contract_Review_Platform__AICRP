@@ -292,13 +292,13 @@ async def get_contract(
             detail="合同不存在"
         )
     
-    # 检查权限
-    if contract.user_id != current_user.id and current_user.role not in ["admin", "superadmin"]:
+    # 检查权限（审核员可查看，便于进入审核流程）
+    if contract.user_id != current_user.id and current_user.role not in ["admin", "superadmin", "reviewer"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="无权访问此合同"
         )
-    
+
     return ContractResponse.from_orm(contract)
 
 
@@ -387,8 +387,8 @@ async def download_contract(
             detail="合同不存在"
         )
     
-    # 检查权限
-    if contract.user_id != current_user.id and current_user.role not in ["admin", "superadmin"]:
+    # 检查权限（审核员可下载，便于审核）
+    if contract.user_id != current_user.id and current_user.role not in ["admin", "superadmin", "reviewer"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="无权下载此合同"
@@ -477,8 +477,8 @@ async def preview_contract(
     
     # 在DEBUG模式下跳过权限检查，便于测试
     if not settings.DEBUG:
-        # 检查权限
-        if contract.user_id != current_user.id and current_user.role not in ["admin", "superadmin"]:
+        # 检查权限（审核员可预览，便于审核）
+        if contract.user_id != current_user.id and current_user.role not in ["admin", "superadmin", "reviewer"]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="无权预览此合同"
@@ -840,13 +840,13 @@ async def get_contract_review_details(
             detail="合同不存在"
         )
     
-    # 检查权限
-    if contract.user_id != current_user.id and current_user.role not in ["admin", "superadmin"]:
+    # 检查权限（审核员可查看，便于进入审核流程）
+    if contract.user_id != current_user.id and current_user.role not in ["admin", "superadmin", "reviewer"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="无权访问此合同"
         )
-    
+
     # 使用合同处理服务获取审核详情
     processing_service = ContractProcessingService()
     review_details = await processing_service.get_contract_review_details(contract_id, db)
@@ -876,13 +876,13 @@ async def trigger_ai_review(
             detail="合同不存在"
         )
     
-    # 检查权限
-    if contract.user_id != current_user.id and current_user.role not in ["admin", "superadmin"]:
+    # 检查权限（审核员可触发 AI 审核）
+    if contract.user_id != current_user.id and current_user.role not in ["admin", "superadmin", "reviewer"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="无权操作此合同"
         )
-    
+
     # 检查合同是否已解析
     if not contract.parsed_text:
         raise HTTPException(

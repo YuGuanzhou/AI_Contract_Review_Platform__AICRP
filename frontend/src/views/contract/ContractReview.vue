@@ -189,13 +189,13 @@
                   <div v-for="(risk, index) in riskPoints" :key="index" class="risk-item">
                     <div class="risk-item-header">
                       <el-tag :type="riskTagType(risk['风险等级'] || risk.risk_level)" size="small">
-                        {{ risk['风险等级'] || risk.risk_level || 'medium' }}
+                        {{ riskLevelText(risk['风险等级'] || risk.risk_level) }}
                       </el-tag>
-                      <span class="risk-position">{{ risk['条款位置'] || risk.clause_reference || risk.clause || `风险点 ${index + 1}` }}</span>
+                      <span class="risk-position">{{ risk['条款位置'] || risk.clause_location || risk.clause_reference || risk.clause || `风险点 ${index + 1}` }}</span>
                     </div>
                     <p class="risk-desc">{{ risk['风险描述'] || risk.risk_description || risk.description }}</p>
-                    <p class="risk-suggestion" v-if="risk['修改建议'] || risk.suggestion">
-                      <span class="suggestion-label">修改建议：</span>{{ risk['修改建议'] || risk.suggestion }}
+                    <p class="risk-suggestion" v-if="risk['修改建议'] || risk.modification_suggestion || risk.suggestion">
+                      <span class="suggestion-label">修改建议：</span>{{ risk['修改建议'] || risk.modification_suggestion || risk.suggestion }}
                     </p>
                   </div>
                 </el-collapse-item>
@@ -354,8 +354,8 @@ const aiSuggestions = computed(() => {
     if (Array.isArray(notes)) suggestions.push(...notes)
   }
   riskPoints.value.forEach((r: any) => {
-    const pos = r['条款位置'] || r.clause_reference || r.clause || ''
-    const sug = r['修改建议'] || r.suggestion || ''
+    const pos = r['条款位置'] || r.clause_location || r.clause_reference || r.clause || ''
+    const sug = r['修改建议'] || r.modification_suggestion || r.suggestion || ''
     const desc = r['风险描述'] || r.risk_description || r.description || ''
     if (sug) suggestions.push(`${pos ? pos + '：' : ''}${sug}`)
     else if (desc) suggestions.push(`${pos ? pos + '：' : ''}${desc}`)
@@ -380,7 +380,7 @@ const loadData = async () => {
     }
     if (detailsData.risk_points?.length) {
       reviewForm.value.keyClauses = detailsData.risk_points
-        .map((r: any) => r['条款位置'] || r.clause_reference || r.clause || '')
+        .map((r: any) => r['条款位置'] || r.clause_location || r.clause_reference || r.clause || '')
         .filter(Boolean)
         .join('，')
     }
