@@ -43,7 +43,7 @@
               </div>
             </template>
             <div class="preview-content">
-              <div v-if="contractId" class="pdf-viewer-container">
+              <div v-if="contractId && isPdf" class="pdf-viewer-container">
                 <PdfPreview
                   :pdf-url="pdfPreviewUrl"
                   :initial-page="currentPage"
@@ -55,6 +55,12 @@
                   ref="pdfViewerRef"
                 />
               </div>
+              <div v-else-if="contractId && !isPdf" class="non-pdf-hint">
+                <el-icon :size="60" color="#409EFF"><Document /></el-icon>
+                <p class="file-info">文件：{{ contract.original_filename }}</p>
+                <p>该文件为 {{ (contract.file_type || '未知') }} 格式，暂不支持在线预览</p>
+                <el-button type="primary" :icon="Download" @click="handleDownload">下载合同</el-button>
+              </div>
               <div v-else class="pdf-viewer-placeholder">
                 <el-icon :size="80" color="#409EFF"><Document /></el-icon>
                 <p>PDF 预览区域</p>
@@ -62,7 +68,7 @@
                 <p class="file-tip">请上传或选择合同文件进行预览</p>
               </div>
             </div>
-            <div class="preview-footer" v-if="contractId">
+            <div class="preview-footer" v-if="contractId && isPdf">
               <div class="page-navigation">
                 <el-button :icon="ArrowLeft" @click="prevPage" :disabled="currentPage <= 1" size="small">上一页</el-button>
                 <span class="page-info">第 {{ currentPage }} 页 / 共 {{ totalPages }} 页</span>
@@ -227,7 +233,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Document, FullScreen, ArrowLeft, ArrowRight, Upload, Switch, Fold } from '@element-plus/icons-vue'
+import { Document, FullScreen, ArrowLeft, ArrowRight, Upload, Switch, Fold, Download } from '@element-plus/icons-vue'
 import type { UploadFile } from 'element-plus'
 import PdfPreview from '@/components/PdfPreview.vue'
 import { useUserStore } from '@/stores/user'
@@ -311,6 +317,18 @@ const pdfPreviewUrl = computed(() => {
   if (!contractId.value) return ''
   return `/api/contracts/${contractId.value}/preview`
 })
+
+// 是否为可在线预览的 PDF（docx 等其他格式交给 pdf.js 会报 "Invalid PDF structure"）
+const isPdf = computed(() => {
+  const ft = (contract.value.file_type || '').toLowerCase()
+  return !ft || ft.includes('pdf')
+})
+
+// 下载合同文件
+const handleDownload = () => {
+  if (!contractId.value) return
+  window.open(`/api/contracts/${contractId.value}/download`, '_blank')
+}
 
 // AI 审核结果
 const aiReviewResult = computed<any>(() => reviewDetails.value?.ai_review_result || {})
@@ -676,6 +694,33 @@ const riskLevelText = (level: string): string => {
             .pdf-viewer-container {
               height: 100%;
               min-height: 700px;
+            }
+
+            .non-pdf-hint {
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justify-content: center;
+              height: 700px;
+              border: 2px dashed #dcdfe6;
+              border-radius: 8px;
+              background-color: #fafafa;
+              margin-bottom: 20px;
+
+              p {
+                margin-top: 12px;
+                color: #606266;
+
+                &.file-info {
+                  font-size: 14px;
+                  color: #909399;
+                  margin-top: 6px;
+                }
+              }
+
+              .el-button {
+                margin-top: 18px;
+              }
             }
 
             .pdf-viewer-placeholder {

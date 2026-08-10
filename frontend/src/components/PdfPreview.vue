@@ -238,7 +238,15 @@ const loadPdf = async () => {
   } catch (err: any) {
     console.error('PDF加载失败:', err)
     console.error('错误堆栈:', err.stack)
-    error.value = `PDF加载失败: ${err.message || '未知错误'}`
+    const msg = err?.message || err?.name || '未知错误'
+    // 区分常见错误，给出可操作的提示
+    if (/404/.test(msg) || /Failed to fetch/.test(msg)) {
+      error.value = '合同文件不存在或已被删除，请重新上传后再预览'
+    } else if (/Invalid PDF|structure/i.test(msg)) {
+      error.value = '该文件不是有效的PDF文档，无法在线预览，请点击"下载合同"查看'
+    } else {
+      error.value = `PDF加载失败: ${msg}`
+    }
     emit('error', error.value)
   } finally {
     loading.value = false

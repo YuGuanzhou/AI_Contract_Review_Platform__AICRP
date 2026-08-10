@@ -438,17 +438,34 @@ async def download_contract(
         )
     else:
         # MinIO存储：获取文件内容并返回StreamingResponse
+        # 先检查对象是否存在，避免将"文件不存在"误报为500（前端会收到JSON而非PDF字节）
+        if not await file_service.file_exists(contract.file_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="合同文件不存在"
+            )
         try:
             file_content = await file_service.get_file_content(contract.file_path)
-            
+
             from fastapi.responses import StreamingResponse
             from io import BytesIO
-            
+            import urllib.parse
+
+            # 处理文件名编码：中文文件名无法直接用 latin-1 放进 header，
+            # 用 ASCII 安全的回退名 + RFC5987 filename* 携带原始名
+            file_ext = os.path.splitext(contract.original_filename or '')[1].lower()
+            try:
+                contract.original_filename.encode('ascii')
+                safe_filename = contract.original_filename
+            except (UnicodeEncodeError, AttributeError):
+                safe_filename = f"contract_{contract_id}{file_ext}"
+            encoded_filename = urllib.parse.quote(contract.original_filename or '', safe='')
+
             return StreamingResponse(
                 BytesIO(file_content),
                 media_type="application/octet-stream",
                 headers={
-                    "Content-Disposition": f"attachment; filename=\"{contract.original_filename}\""
+                    "Content-Disposition": f"attachment; filename=\"{safe_filename}\"; filename*=UTF-8''{encoded_filename}"
                 }
             )
         except Exception as e:
@@ -542,6 +559,12 @@ async def preview_contract(
         )
     else:
         # MinIO存储：获取文件内容并返回StreamingResponse
+        # 先检查对象是否存在，避免将"文件不存在"误报为500（前端会收到JSON而非PDF字节）
+        if not await file_service.file_exists(contract.file_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="合同文件不存在"
+            )
         try:
             file_content = await file_service.get_file_content(contract.file_path)
             
@@ -698,6 +721,12 @@ async def preview_contract_public(
         )
     else:
         # MinIO存储：获取文件内容并返回StreamingResponse
+        # 先检查对象是否存在，避免将"文件不存在"误报为500（前端会收到JSON而非PDF字节）
+        if not await file_service.file_exists(contract.file_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="合同文件不存在"
+            )
         try:
             file_content = await file_service.get_file_content(contract.file_path)
             

@@ -110,7 +110,14 @@ const loadPdf = async () => {
   } catch (err: any) {
     console.error('PDF加载失败:', err)
     console.error('错误堆栈:', err.stack)
-    error.value = `PDF加载失败: ${err.message || '未知错误'}`
+    const msg = err?.message || err?.name || '未知错误'
+    if (/404/.test(msg) || /Failed to fetch/.test(msg)) {
+      error.value = '合同文件不存在或已被删除，请重新上传后再预览'
+    } else if (/Invalid PDF|structure/i.test(msg)) {
+      error.value = '该文件不是有效的PDF文档，无法在线预览，请下载后查看'
+    } else {
+      error.value = `PDF加载失败: ${msg}`
+    }
     emit('error', error.value)
   } finally {
     loading.value = false
