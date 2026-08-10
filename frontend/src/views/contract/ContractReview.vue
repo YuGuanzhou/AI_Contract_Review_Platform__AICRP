@@ -7,6 +7,8 @@
         <el-breadcrumb-item>合同审核</el-breadcrumb-item>
       </el-breadcrumb>
       <div class="header-actions">
+        <el-button v-if="isReviewer && !hasAiReview" type="primary" :loading="aiLoading" @click="handleTriggerAiReview">触发AI审核</el-button>
+        <el-button v-if="isReviewer && hasAiReview" type="text" :loading="aiLoading" @click="handleTriggerAiReview">重新AI审核</el-button>
         <el-button type="primary" @click="handleSubmitReview" :loading="submitting" v-if="isReviewer">提交审核</el-button>
         <el-button @click="handleSaveDraft">保存草稿</el-button>
         <el-button @click="handleBack">返回</el-button>
@@ -21,13 +23,13 @@
           <el-radio-button label="previewOnly">仅预览</el-radio-button>
         </el-radio-group>
       </div>
-      
-      <div class="main-content" :class="layoutMode">
+
+      <div class="main-content" :class="layoutMode" v-loading="loading">
         <div class="preview-section">
           <el-card class="contract-preview-card">
             <template #header>
               <div class="card-header">
-                <h3>合同预览 - {{ contract.name }}</h3>
+                <h3>合同预览 - {{ contract.title || '未命名合同' }}</h3>
                 <div class="card-actions">
                   <el-button type="text" @click="toggleFullscreen" title="全屏预览">
                     <el-icon><FullScreen /></el-icon>
@@ -56,7 +58,7 @@
               <div v-else class="pdf-viewer-placeholder">
                 <el-icon :size="80" color="#409EFF"><Document /></el-icon>
                 <p>PDF 预览区域</p>
-                <p class="file-info">文件：{{ contract.fileName }}</p>
+                <p class="file-info">文件：{{ contract.original_filename }}</p>
                 <p class="file-tip">请上传或选择合同文件进行预览</p>
               </div>
             </div>
@@ -67,13 +69,13 @@
                 <el-button @click="nextPage" :disabled="currentPage >= totalPages" size="small">下一页 <el-icon><ArrowRight /></el-icon></el-button>
               </div>
               <div class="file-info-footer">
-                <el-tag size="small" type="info">{{ contract.fileName }}</el-tag>
+                <el-tag size="small" type="info">{{ contract.original_filename }}</el-tag>
                 <el-tag size="small" type="success">{{ totalPages }} 页</el-tag>
               </div>
             </div>
           </el-card>
         </div>
-        
+
         <div class="review-section" v-if="layoutMode !== 'previewOnly'">
           <el-card class="review-form-card">
             <template #header>
@@ -131,60 +133,87 @@
                 </el-form-item>
                 <el-form-item label="AI建议">
                   <el-card shadow="never" class="ai-suggestion">
-                    <p>1. 第5条付款条款：建议明确付款期限为30天</p>
-                    <p>2. 第8条违约责任：违约金比例较高，建议协商调整</p>
-                    <p>3. 第12条争议解决：建议增加仲裁条款</p>
+                    <p v-for="(suggestion, index) in aiSuggestions" :key="index">{{ index + 1 }}. {{ suggestion }}</p>
+                    <el-empty v-if="!aiSuggestions.length" description="暂无AI建议" :image-size="40" />
                   </el-card>
                 </el-form-item>
               </el-form>
             </div>
           </el-card>
-          
+
           <el-card class="ai-analysis-card">
             <template #header>
               <h3>AI智能分析报告</h3>
             </template>
             <div class="ai-analysis-content">
-              <el-collapse v-model="activeAnalysisPanels">
-                <el-collapse-item title="条款完整性分析" name="completeness">
-                  <div class="analysis-item">
-                    <el-progress :percentage="85" :color="getProgressColor(85)" />
-                    <p>合同主要条款完整度较高，缺少不可抗力条款</p>
-                  </div>
-                </el-collapse-item>
-                <el-collapse-item title="法律风险检测" name="risks">
-                  <div class="analysis-item">
-                    <el-alert
-                      title="发现3个潜在风险点"
-                      type="warning"
-                      :closable="false"
-                      show-icon
-                    />
-                    <ul>
-                      <li>违约金比例超过法定上限</li>
-                      <li>管辖法院约定不明确</li>
-                      <li>知识产权归属条款缺失</li>
-                    </ul>
-                  </div>
-                </el-collapse-item>
-                <el-collapse-item title="合规性检查" name="compliance">
-                  <div class="analysis-item">
-                    <el-alert
-                      title="符合行业标准"
-                      type="success"
-                      :closable="false"
-                      show-icon
-                    />
-                    <p>合同符合《民法典》相关规定，条款设置合理</p>
-                  </div>
-                </el-collapse-item>
-                <el-collapse-item title="关键信息提取" name="extraction">
-                  <el-descriptions :column="2" border>
-                    <el-descriptions-item label="合同金额">¥ 1,250,000.00</el-descriptions-item>
-                    <el-descriptions-item label="合同期限">2024-01-01 至 2024-12-31</el-descriptions-item>
-                    <el-descriptions-item label="交付时间">合同签订后30个工作日内</el-descriptions-item>
-                    <el-descriptions-item label="付款方式">30%预付款，70%验收后付款</el-descriptions-item>
+              <!-- 风险概览 -->
+              <div class="risk-overview">
+                <el-progress
+                  type="dashboard"
+                  :percentage="reviewDetails.risk_score || 0"
+                  :color="getProgressColor(reviewDetails.risk_score || 0)"
+                >
+                  <template #default>
+                    <span class="risk-score-text">{{ reviewDetails.risk_score || 0 }}</span>
+                  </template>
+                </el-progress>
+                <div class="risk-overview-info">
+                  <el-tag :type="riskTagType(reviewDetails.risk_level)" size="large">
+                    {{ riskLevelText(reviewDetails.risk_level) }}
+                  </el-tag>
+                  <p class="review-summary">{{ reviewDetails.review_summary || '暂无AI审核摘要' }}</p>
+                </div>
+              </div>
+
+              <!-- 无 AI 审核结果时的空态 -->
+              <el-empty v-if="!hasAiReview" description="该合同尚未进行AI审核">
+                <el-button type="primary" :loading="aiLoading" @click="handleTriggerAiReview">触发 AI 审核</el-button>
+              </el-empty>
+
+              <el-collapse v-else v-model="activeAnalysisPanels">
+                <el-collapse-item v-if="basicInfoEntries.length" title="合同基本信息" name="basic_info">
+                  <el-descriptions :column="1" border>
+                    <el-descriptions-item v-for="[key, value] in basicInfoEntries" :key="key" :label="key">
+                      {{ value }}
+                    </el-descriptions-item>
                   </el-descriptions>
+                </el-collapse-item>
+                <el-collapse-item v-if="keyClauseEntries.length" title="关键条款分析" name="key_clauses">
+                  <el-descriptions :column="1" border>
+                    <el-descriptions-item v-for="[key, value] in keyClauseEntries" :key="key" :label="key">
+                      {{ value }}
+                    </el-descriptions-item>
+                  </el-descriptions>
+                </el-collapse-item>
+                <el-collapse-item v-if="riskPoints.length" title="具体风险点" name="risks">
+                  <div v-for="(risk, index) in riskPoints" :key="index" class="risk-item">
+                    <div class="risk-item-header">
+                      <el-tag :type="riskTagType(risk['风险等级'] || risk.risk_level)" size="small">
+                        {{ risk['风险等级'] || risk.risk_level || 'medium' }}
+                      </el-tag>
+                      <span class="risk-position">{{ risk['条款位置'] || risk.clause_reference || risk.clause || `风险点 ${index + 1}` }}</span>
+                    </div>
+                    <p class="risk-desc">{{ risk['风险描述'] || risk.risk_description || risk.description }}</p>
+                    <p class="risk-suggestion" v-if="risk['修改建议'] || risk.suggestion">
+                      <span class="suggestion-label">修改建议：</span>{{ risk['修改建议'] || risk.suggestion }}
+                    </p>
+                  </div>
+                </el-collapse-item>
+                <el-collapse-item v-if="overallEvalEntries.length" title="总体评价" name="overall">
+                  <el-descriptions :column="1" border>
+                    <el-descriptions-item v-for="[key, value] in overallEvalEntries" :key="key" :label="key">
+                      {{ value }}
+                    </el-descriptions-item>
+                  </el-descriptions>
+                </el-collapse-item>
+                <el-collapse-item v-if="modificationGroups.length" title="修改建议" name="suggestions">
+                  <div v-for="[group, items] in modificationGroups" :key="group" class="suggestion-group">
+                    <h4 class="suggestion-group-title">{{ group }}</h4>
+                    <ul v-if="Array.isArray(items) && items.length">
+                      <li v-for="(item, idx) in items" :key="idx">{{ item }}</li>
+                    </ul>
+                    <p v-else class="suggestion-empty">无</p>
+                  </div>
                 </el-collapse-item>
               </el-collapse>
             </div>
@@ -202,6 +231,15 @@ import { Document, FullScreen, ArrowLeft, ArrowRight, Upload, Switch, Fold } fro
 import type { UploadFile } from 'element-plus'
 import PdfPreview from '@/components/PdfPreview.vue'
 import { useUserStore } from '@/stores/user'
+import {
+  getContract,
+  getContractReviewDetails,
+  triggerAiReview,
+  submitContractReview,
+  type Contract,
+  type ContractReviewDetails,
+  type SubmitReviewPayload
+} from '@/api/contract'
 
 const route = useRoute()
 const router = useRouter()
@@ -209,23 +247,59 @@ const userStore = useUserStore()
 
 const contractId = ref('')
 const currentPage = ref(1)
-const totalPages = ref(12)
+const totalPages = ref(0)
+const loading = ref(false)
 const submitting = ref(false)
-const activeAnalysisPanels = ref(['completeness', 'risks', 'compliance'])
+const aiLoading = ref(false)
+const activeAnalysisPanels = ref(['basic_info', 'key_clauses', 'risks', 'overall', 'suggestions'])
 const pdfViewerRef = ref<InstanceType<typeof PdfPreview>>()
 const layoutMode = ref('horizontal') // horizontal, vertical, previewOnly
 const isReviewer = computed(() => ['reviewer', 'admin'].includes(userStore.userRole))
 const reviewSectionVisible = ref(true)
 
-const contract = ref({
-  fileName: 'purchase_agreement.pdf',
-  name: '采购协议合同'
+const contract = ref<Contract>({
+  id: 0,
+  user_id: 0,
+  title: '',
+  description: null,
+  contract_type: '',
+  status: '',
+  original_filename: '',
+  file_path: null,
+  file_size: null,
+  file_type: null,
+  file_hash: null,
+  parsed_text: null,
+  parsed_json: null,
+  page_count: null,
+  word_count: null,
+  risk_level: null,
+  risk_score: null,
+  review_summary: null,
+  uploaded_at: '',
+  parsed_at: null,
+  reviewed_at: null,
+  archived_at: null,
+})
+
+const reviewDetails = ref<ContractReviewDetails>({
+  success: false,
+  contract_id: 0,
+  status: '',
+  risk_score: 0,
+  risk_level: '',
+  review_summary: null,
+  has_ai_review: false,
+  ai_review_result: null,
+  risk_points: [],
+  suggestions: null,
+  reviewed_at: null,
 })
 
 const reviewForm = ref({
   result: 'approved',
   riskLevel: 'medium',
-  keyClauses: '第5条付款条款，第8条违约责任，第12条争议解决',
+  keyClauses: '',
   comments: '',
   attachments: [] as string[]
 })
@@ -238,9 +312,109 @@ const pdfPreviewUrl = computed(() => {
   return `/api/contracts/${contractId.value}/preview`
 })
 
+// AI 审核结果
+const aiReviewResult = computed<any>(() => reviewDetails.value?.ai_review_result || {})
+const hasAiReview = computed(() => !!reviewDetails.value?.has_ai_review)
+
+// 动态渲染的各区块数据（兼容中英文 key）
+const basicInfoEntries = computed(() => Object.entries(aiReviewResult.value.basic_info || {}))
+const keyClauseEntries = computed(() => Object.entries(aiReviewResult.value.key_clauses || {}))
+const overallEvalEntries = computed(() => Object.entries(aiReviewResult.value.overall_evaluation || {}))
+const modificationGroups = computed<[string, string[]][]>(() => {
+  const raw: any = aiReviewResult.value.modification_suggestions || {}
+  // 组名中英映射（真实 DeepSeek 返回英文 key，mock 返回中文 key）
+  const labelMap: Record<string, string> = {
+    must_modify: '必须修改项',
+    suggested_optimization: '建议优化项',
+    suggest_optimize: '建议优化项',
+    notes: '注意事项',
+    必须修改项: '必须修改项',
+    建议优化项: '建议优化项',
+    注意事项: '注意事项',
+  }
+  return Object.entries(raw)
+    .filter(([, items]) => Array.isArray(items) && items.length)
+    .map(([key, items]) => [labelMap[key] || key, items as string[]])
+})
+const riskPoints = computed<any[]>(() => {
+  if (reviewDetails.value?.risk_points?.length) return reviewDetails.value.risk_points
+  return aiReviewResult.value.specific_risks || []
+})
+
+// AI 建议（由 修改建议 + 具体风险点 动态生成）
+const aiSuggestions = computed(() => {
+  const suggestions: string[] = []
+  const mod: any = aiReviewResult.value.modification_suggestions
+  if (mod) {
+    const must = mod['必须修改项'] || mod.must_modify
+    const optimize = mod['建议优化项'] || mod.suggested_optimization || mod.suggest_optimize
+    const notes = mod['注意事项'] || mod.notes
+    if (Array.isArray(must)) suggestions.push(...must)
+    if (Array.isArray(optimize)) suggestions.push(...optimize)
+    if (Array.isArray(notes)) suggestions.push(...notes)
+  }
+  riskPoints.value.forEach((r: any) => {
+    const pos = r['条款位置'] || r.clause_reference || r.clause || ''
+    const sug = r['修改建议'] || r.suggestion || ''
+    const desc = r['风险描述'] || r.risk_description || r.description || ''
+    if (sug) suggestions.push(`${pos ? pos + '：' : ''}${sug}`)
+    else if (desc) suggestions.push(`${pos ? pos + '：' : ''}${desc}`)
+  })
+  return Array.from(new Set(suggestions)).slice(0, 10)
+})
+
+// 加载合同信息 + AI 审核详情
+const loadData = async () => {
+  if (!contractId.value) return
+  loading.value = true
+  try {
+    const [contractData, detailsData] = await Promise.all([
+      getContract(Number(contractId.value)),
+      getContractReviewDetails(Number(contractId.value)),
+    ])
+    contract.value = contractData
+    reviewDetails.value = detailsData
+    totalPages.value = contractData.page_count || 0
+    if (detailsData.risk_level) {
+      reviewForm.value.riskLevel = detailsData.risk_level
+    }
+    if (detailsData.risk_points?.length) {
+      reviewForm.value.keyClauses = detailsData.risk_points
+        .map((r: any) => r['条款位置'] || r.clause_reference || r.clause || '')
+        .filter(Boolean)
+        .join('，')
+    }
+  } catch (error: any) {
+    console.error('加载审核数据失败:', error)
+    const detail = error?.response?.data?.detail
+    ElMessage.error(detail || '加载审核数据失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+// 触发 / 重新 AI 审核
+const handleTriggerAiReview = async () => {
+  if (!contractId.value) return
+  aiLoading.value = true
+  try {
+    await triggerAiReview(Number(contractId.value))
+    ElMessage.success('AI 审核完成')
+    // 重新拉取审核详情
+    const detailsData = await getContractReviewDetails(Number(contractId.value))
+    reviewDetails.value = detailsData
+  } catch (error: any) {
+    console.error('触发AI审核失败:', error)
+    const detail = error?.response?.data?.detail
+    ElMessage.error(detail || 'AI 审核失败，请稍后重试')
+  } finally {
+    aiLoading.value = false
+  }
+}
+
 onMounted(() => {
   contractId.value = route.params.id as string
-  // 加载合同信息和AI分析
+  loadData()
 })
 
 // PDF加载完成回调
@@ -259,18 +433,36 @@ const onPageChange = (page: number) => {
   currentPage.value = page
 }
 
-const handleSubmitReview = () => {
+// 提交人工审核
+const handleSubmitReview = async () => {
+  if (!contractId.value) return
   submitting.value = true
-  // 模拟提交
-  setTimeout(() => {
-    submitting.value = false
+  try {
+    const payload: SubmitReviewPayload = {
+      manual_review_result: {
+        result: reviewForm.value.result,
+        key_clauses: reviewForm.value.keyClauses,
+        comments: reviewForm.value.comments,
+        attachments: fileList.value.map((f) => f.name),
+      },
+      risk_level: reviewForm.value.riskLevel,
+      risk_score: reviewDetails.value.risk_score,
+      review_summary: reviewForm.value.comments || reviewDetails.value.review_summary || '',
+    }
+    await submitContractReview(Number(contractId.value), payload)
     ElMessage.success('审核意见已提交')
     router.push(`/contracts/${contractId.value}`)
-  }, 1000)
+  } catch (error: any) {
+    console.error('提交审核失败:', error)
+    const detail = error?.response?.data?.detail
+    ElMessage.error(detail || '提交失败，请重试')
+  } finally {
+    submitting.value = false
+  }
 }
 
 const handleSaveDraft = () => {
-  ElMessage.info('草稿已保存')
+  ElMessage.info('草稿已保存在本地，请继续完善后提交')
 }
 
 const handleBack = () => {
@@ -322,9 +514,28 @@ const toggleReviewSection = () => {
 }
 
 const getProgressColor = (percentage: number) => {
-  if (percentage >= 80) return '#67C23A'
-  if (percentage >= 60) return '#E6A23C'
-  return '#F56C6C'
+  if (percentage >= 70) return '#F56C6C'
+  if (percentage >= 30) return '#E6A23C'
+  return '#67C23A'
+}
+
+// 风险等级 -> el-tag 类型（兼容中英文值）
+const riskTagType = (level: string): 'danger' | 'warning' | 'success' | 'info' => {
+  const l = (level || '').toLowerCase()
+  if (l.includes('高') || l === 'high' || l === 'danger' || l === 'critical') return 'danger'
+  if (l.includes('低') || l === 'low' || l === 'success') return 'success'
+  if (l) return 'warning'
+  return 'info'
+}
+
+const riskLevelText = (level: string): string => {
+  const map: Record<string, string> = {
+    high: '高风险',
+    medium: '中风险',
+    low: '低风险',
+    unknown: '未知',
+  }
+  return map[level] || level || '未知'
 }
 </script>
 
@@ -333,7 +544,7 @@ const getProgressColor = (percentage: number) => {
   height: calc(100vh - 60px); /* 整个页面使用视口高度 */
   display: flex;
   flex-direction: column;
-  
+
   .header {
     display: flex;
     justify-content: space-between;
@@ -351,13 +562,13 @@ const getProgressColor = (percentage: number) => {
     flex: 1;
     display: flex;
     flex-direction: column;
-    
+
     .layout-toggle {
       margin-bottom: 15px;
       display: flex;
       justify-content: flex-end;
       flex-shrink: 0;
-      
+
       .el-radio-group {
         background: #f5f7fa;
         padding: 4px;
@@ -375,18 +586,18 @@ const getProgressColor = (percentage: number) => {
       &.horizontal {
         flex-direction: row;
         height: 100%;
-        
+
         .preview-section {
           flex: 3;
           min-width: 0;
           height: 100%;
-          
+
           .contract-preview-card {
             height: 100%;
             min-height: 0;
           }
         }
-        
+
         .review-section {
           flex: 2;
           min-width: 400px;
@@ -399,17 +610,17 @@ const getProgressColor = (percentage: number) => {
       &.vertical {
         flex-direction: column;
         height: 100%;
-        
+
         .preview-section {
           width: 100%;
           flex: 3;
           min-height: 0;
-          
+
           .contract-preview-card {
             height: 100%;
           }
         }
-        
+
         .review-section {
           width: 100%;
           flex: 2;
@@ -422,13 +633,13 @@ const getProgressColor = (percentage: number) => {
         .preview-section {
           width: 100%;
           height: 100%;
-          
+
           .contract-preview-card {
             height: 100%;
             min-height: 0;
           }
         }
-        
+
         .review-section {
           display: none;
         }
@@ -445,13 +656,13 @@ const getProgressColor = (percentage: number) => {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            
+
             h3 {
               margin: 0;
               font-size: 18px;
               font-weight: 600;
             }
-            
+
             .card-actions {
               display: flex;
               gap: 10px;
@@ -461,7 +672,7 @@ const getProgressColor = (percentage: number) => {
           .preview-content {
             flex: 1;
             min-height: 700px; /* 进一步增加内容区域最小高度 */
-            
+
             .pdf-viewer-container {
               height: 100%;
               min-height: 700px;
@@ -487,7 +698,7 @@ const getProgressColor = (percentage: number) => {
                   color: #909399;
                   margin-top: 5px;
                 }
-                
+
                 &.file-tip {
                   font-size: 12px;
                   color: #c0c4cc;
@@ -504,19 +715,19 @@ const getProgressColor = (percentage: number) => {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            
+
             .page-navigation {
               display: flex;
               align-items: center;
               gap: 10px;
-              
+
               .page-info {
                 font-size: 14px;
                 color: #606266;
                 font-weight: 500;
               }
             }
-            
+
             .file-info-footer {
               display: flex;
               gap: 8px;
@@ -529,19 +740,19 @@ const getProgressColor = (percentage: number) => {
         display: flex;
         flex-direction: column;
         gap: 20px;
-        
+
         .review-form-card {
           .card-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            
+
             h3 {
               margin: 0;
               font-size: 16px;
               font-weight: 600;
             }
-            
+
             .collapse-review {
               padding: 0;
               height: auto;
@@ -565,19 +776,87 @@ const getProgressColor = (percentage: number) => {
 
         .ai-analysis-card {
           .ai-analysis-content {
-            .analysis-item {
-              .el-progress {
-                margin-bottom: 10px;
+            .risk-overview {
+              display: flex;
+              align-items: center;
+              gap: 20px;
+              margin-bottom: 16px;
+              padding: 12px;
+              background: #f5f7fa;
+              border-radius: 8px;
+
+              .risk-score-text {
+                font-size: 20px;
+                font-weight: bold;
+                color: #303133;
+              }
+
+              .risk-overview-info {
+                flex: 1;
+
+                .review-summary {
+                  margin-top: 8px;
+                  font-size: 13px;
+                  color: #606266;
+                  line-height: 1.5;
+                }
+              }
+            }
+
+            .risk-item {
+              padding: 12px;
+              border: 1px solid #ebeef5;
+              border-radius: 6px;
+              margin-bottom: 10px;
+              background: #fff;
+
+              .risk-item-header {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                margin-bottom: 6px;
+
+                .risk-position {
+                  font-weight: 600;
+                  color: #303133;
+                  font-size: 14px;
+                }
+              }
+
+              .risk-desc {
+                color: #606266;
+                font-size: 14px;
+                margin-bottom: 4px;
+              }
+
+              .risk-suggestion {
+                color: #409eff;
+                font-size: 13px;
+
+                .suggestion-label {
+                  color: #909399;
+                }
+              }
+            }
+
+            .suggestion-group {
+              margin-bottom: 12px;
+
+              .suggestion-group-title {
+                font-size: 14px;
+                font-weight: 600;
+                color: #303133;
+                margin-bottom: 6px;
               }
 
               ul {
-                margin: 10px 0 0 20px;
+                margin: 0 0 0 20px;
                 color: #606266;
               }
 
-              p {
-                margin: 10px 0;
-                color: #606266;
+              .suggestion-empty {
+                color: #c0c4cc;
+                font-size: 13px;
               }
             }
           }
@@ -594,7 +873,7 @@ const getProgressColor = (percentage: number) => {
       .main-content {
         &.horizontal {
           flex-direction: column;
-          
+
           .review-section {
             max-width: 100%;
           }
@@ -610,32 +889,32 @@ const getProgressColor = (percentage: number) => {
       flex-direction: column;
       align-items: flex-start;
       gap: 15px;
-      
+
       .header-actions {
         width: 100%;
         justify-content: flex-end;
       }
     }
-    
+
     .review-container {
       .layout-toggle {
         justify-content: center;
       }
-      
+
       .main-content {
         .preview-section {
           .contract-preview-card {
             min-height: 600px;
-            
+
             .preview-footer {
               flex-direction: column;
               gap: 10px;
               align-items: stretch;
-              
+
               .page-navigation {
                 justify-content: center;
               }
-              
+
               .file-info-footer {
                 justify-content: center;
               }

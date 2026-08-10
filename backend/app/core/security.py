@@ -180,44 +180,62 @@ async def get_current_user(
 
 
 async def get_current_active_user(
-    token: str,
-    db  # 移除AsyncSession类型注解
+    request: Request,
+    db: AsyncSession = Depends(get_db)
 ) -> User:
-    """获取当前活跃用户"""
+    """获取当前活跃用户（作为 FastAPI 依赖使用）"""
     from app.models.user import User as UserModel
-    
+
+    token = _extract_bearer_token(request)
     user = await get_current_user(token, db)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="无效的认证凭证",
         )
-    
+
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="用户已被禁用",
         )
-    
+
     return user
 
 
 async def get_current_admin_user(
-    token: str,
-    db  # 移除AsyncSession类型注解
+    request: Request,
+    db: AsyncSession = Depends(get_db)
 ) -> User:
-    """获取当前管理员用户"""
-    from app.models.user import User as UserModel
-    
-    user = await get_current_active_user(token, db)
-    
+    """获取当前管理员用户（作为 FastAPI 依赖使用）"""
+    user = await get_current_active_user(request, db)
+
     if user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="权限不足",
         )
-    
+
     return user
+
+
+def _extract_bearer_token(request: Request) -> str:
+    """从请求头提取 Bearer token，格式错误时抛 401"""
+    auth_header = request.headers.get("Authorization")
+    if not auth_header:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="缺少认证令牌"
+        )
+
+    parts = auth_header.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="令牌格式错误，应为 'Bearer <token>'"
+        )
+
+    return parts[1]
 
 
 async def get_current_user_dependency(
@@ -227,24 +245,8 @@ async def get_current_user_dependency(
     """
     获取当前用户的依赖函数
     """
-    # 从请求头获取token
-    auth_header = request.headers.get("Authorization")
-    if not auth_header:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="缺少认证令牌"
-        )
-    
-    # 验证令牌格式
-    parts = auth_header.split()
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="令牌格式错误，应为 'Bearer <token>'"
-        )
-    
-    token = parts[1]
-    
+    token = _extract_bearer_token(request)
+
     # 使用现有的get_current_user函数
     user = await get_current_user(token, db)
     if not user:

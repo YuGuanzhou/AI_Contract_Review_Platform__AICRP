@@ -90,9 +90,49 @@ export const downloadContract = async (id: number): Promise<Blob> => {
   })
 }
 
+// 合同AI审核详情响应
+export interface ContractReviewDetails {
+  success: boolean
+  contract_id: number
+  status: string
+  risk_score: number
+  risk_level: string
+  review_summary: string | null
+  has_ai_review: boolean
+  ai_review_result: any | null
+  risk_points: any[]
+  suggestions: any
+  reviewed_at: string | null
+}
+
+// 提交人工审核请求体
+export interface SubmitReviewPayload {
+  manual_review_result: Record<string, any>
+  risk_points?: any[]
+  suggestions?: any
+  risk_score?: number
+  risk_level?: string
+  review_summary?: string
+}
+
 // 解析合同
 export const parseContract = async (id: number): Promise<any> => {
   return request.post(`/contracts/${id}/parse`)
+}
+
+// 获取合同审核详情（含 AI 审核结果与风险点）
+export const getContractReviewDetails = async (id: number): Promise<ContractReviewDetails> => {
+  return request.get<ContractReviewDetails>(`/contracts/${id}/review-details`)
+}
+
+// 触发/重跑 AI 审核
+export const triggerAiReview = async (id: number): Promise<any> => {
+  return request.post(`/contracts/${id}/trigger-ai-review`)
+}
+
+// 提交人工审核结果
+export const submitContractReview = async (id: number, data: SubmitReviewPayload): Promise<any> => {
+  return request.post(`/contracts/${id}/review`, data)
 }
 
 // 导入用户合同API
@@ -108,6 +148,9 @@ export const contractApi = {
   deleteContract,
   downloadContract,
   parseContract,
+  getContractReviewDetails,
+  triggerAiReview,
+  submitContractReview,
   
   // 来自userContract模块的方法
   getUserStats: userContractApi.getUserStats,

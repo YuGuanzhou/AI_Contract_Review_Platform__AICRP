@@ -55,18 +55,50 @@ async def create_contract_review(
             detail="合同状态不支持审核，请先完成解析"
         )
     
-    # 创建审核记录
-    review = ContractReview(
-        contract_id=contract_id,
-        user_id=current_user.id,
-        manual_review_result=request.manual_review_result,
-        risk_points=request.risk_points,
-        suggestions=request.suggestions,
-        is_manual_reviewed=True,
-        manual_reviewed_at=func.now() if hasattr(func, 'now') else None
+    # 创建/更新审核记录：复用该合同最新一条已有记录（通常是 AI 审核记录），
+    # 将人工审核结果合并进去，避免 review-details 取到无 AI 数据的空记录
+    existing_review = await db.execute(
+        select(ContractReview).where(
+            ContractReview.contract_id == contract_id
+        ).order_by(desc(ContractReview.id)).limit(1)
     )
-    
-    db.add(review)
+    existing_review = existing_review.scalar_one_or_none()
+
+    manual_review_result = request.manual_review_result or {}
+    final_result = {}
+    if existing_review and existing_review.ai_review_result:
+        final_result["ai_review"] = existing_review.ai_review_result
+    if manual_review_result:
+        final_result["manual_review"] = manual_review_result
+
+    if existing_review:
+        # 更新现有记录，保留 AI 结果，补充人工结果
+        review = existing_review
+        review.manual_review_result = manual_review_result or review.manual_review_result
+        if request.risk_points is not None:
+            review.risk_points = request.risk_points
+        if request.suggestions is not None:
+            review.suggestions = request.suggestions
+        review.is_manual_reviewed = True
+        review.manual_reviewed_at = func.now() if hasattr(func, 'now') else None
+        review.is_finalized = True
+        review.finalized_at = func.now() if hasattr(func, 'now') else None
+        review.final_review_result = final_result or None
+    else:
+        # 无历史记录，新建
+        review = ContractReview(
+            contract_id=contract_id,
+            user_id=current_user.id,
+            manual_review_result=manual_review_result,
+            risk_points=request.risk_points,
+            suggestions=request.suggestions,
+            is_manual_reviewed=True,
+            manual_reviewed_at=func.now() if hasattr(func, 'now') else None,
+            is_finalized=True,
+            finalized_at=func.now() if hasattr(func, 'now') else None,
+            final_review_result=final_result or None
+        )
+        db.add(review)
     
     # 更新合同状态
     contract.status = ContractStatus.REVIEWED
@@ -253,15 +285,14 @@ async def ai_review_contract(
                 detail=f"AI 审核失败: {ai_result.get('error', '未知错误')}"
             )
         
-        # 创建或更新审核记录
+        # 创建或更新审核记录（复用该合同最新一条记录，避免与后台自动审核记录重复）
         existing_review = await db.execute(
             select(ContractReview).where(
-                ContractReview.contract_id == contract_id,
-                ContractReview.user_id == current_user.id
-            )
+                ContractReview.contract_id == contract_id
+            ).order_by(desc(ContractReview.id)).limit(1)
         )
         existing_review = existing_review.scalar_one_or_none()
-        
+
         if existing_review:
             # 更新现有记录
             existing_review.ai_review_result = ai_result.get("review_result")
@@ -280,15 +311,16 @@ async def ai_review_contract(
                 ai_reviewed_at=func.now() if hasattr(func, 'now') else None
             )
             db.add(review)
-        
+
         # 更新合同风险信息
         contract.risk_score = ai_result.get("risk_score", 0)
         contract.risk_level = ai_result.get("risk_level", "unknown")
         contract.review_summary = ai_result.get("summary", "")
-        
-        # 如果合同状态是已解析，更新为审核中
-        if contract.status == ContractStatus.PARSED:
-            contract.status = ContractStatus.AI_PENDING
+
+        # AI 审核完成后流转到人工审核队列
+        if contract.status in (ContractStatus.PARSED, ContractStatus.AI_PENDING, ContractStatus.AI_REVIEWED):
+            contract.status = ContractStatus.MANUAL_PENDING
+        contract.reviewed_at = func.now() if hasattr(func, 'now') else None
         
         await db.commit()
         await db.refresh(review)

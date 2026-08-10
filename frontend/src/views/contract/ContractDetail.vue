@@ -81,7 +81,11 @@
 
         <div class="ai-analysis">
           <h4>AI初步分析结果</h4>
-          <el-card v-if="contract.review_summary" shadow="never">
+          <div v-if="contract.risk_score !== null && contract.risk_score !== undefined" class="risk-overview">
+            <el-tag :type="riskTagType(contract.risk_level)">风险等级：{{ riskLevelText(contract.risk_level) }}</el-tag>
+            <span class="risk-score">AI风险评分：{{ contract.risk_score }}</span>
+          </div>
+          <el-card v-if="contract.review_summary" shadow="never" class="summary-card">
             <div v-html="contract.review_summary"></div>
           </el-card>
           <el-empty v-else description="暂无AI分析结果" :image-size="100" />
@@ -221,6 +225,8 @@ const getStatusType = (status: string): 'primary' | 'success' | 'warning' | 'inf
     'uploaded': 'info',
     'parsing': 'warning',
     'parsed': 'info',
+    'ai_pending': 'warning',
+    'manual_pending': 'warning',
     'reviewing': 'warning',
     'reviewed': 'success',
     'revised': 'info',
@@ -236,6 +242,8 @@ const getStatusText = (status: string): string => {
     'uploaded': '已上传',
     'parsing': '解析中',
     'parsed': '已解析',
+    'ai_pending': '待AI审核',
+    'manual_pending': '待人工审核',
     'reviewing': '审核中',
     'reviewed': '已审核',
     'revised': '已修订',
@@ -243,6 +251,26 @@ const getStatusText = (status: string): string => {
     'error': '错误'
   }
   return statusMap[status] || status
+}
+
+// 风险等级 -> el-tag 类型（兼容中英文值）
+const riskTagType = (level: string | null | undefined): 'danger' | 'warning' | 'success' | 'info' => {
+  const l = (level || '').toLowerCase()
+  if (l.includes('高') || l === 'high' || l === 'danger') return 'danger'
+  if (l.includes('低') || l === 'low' || l === 'success') return 'success'
+  if (l) return 'warning'
+  return 'info'
+}
+
+// 风险等级中文文本
+const riskLevelText = (level: string | null | undefined): string => {
+  const map: Record<string, string> = {
+    high: '高风险',
+    medium: '中风险',
+    low: '低风险',
+    unknown: '未知',
+  }
+  return map[level || ''] || level || '未知'
 }
 
 // 获取合同详情
@@ -416,6 +444,24 @@ export default {
       h4 {
         margin-bottom: 15px;
         color: #303133;
+      }
+    }
+
+    .ai-analysis {
+      .risk-overview {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 12px;
+
+        .risk-score {
+          font-size: 14px;
+          color: #606266;
+        }
+      }
+
+      .summary-card {
+        margin-top: 12px;
       }
     }
   }

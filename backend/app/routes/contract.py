@@ -850,22 +850,42 @@ async def trigger_ai_review(
         contract.status = ContractStatus.MANUAL_PENDING
         await db.commit()
         
-        # 创建审核记录
+        # 创建/更新审核记录：复用该合同最新一条记录，避免与后台自动审核记录重复
         from app.models.contract import ContractReview
-        review_record = ContractReview(
-            contract_id=contract.id,
-            user_id=contract.user_id,
-            ai_review_result=ai_review_result.get("review_result", {}),
-            risk_points=ai_review_result.get("review_result", {}).get("specific_risks", []),
-            suggestions=ai_review_result.get("review_result", {}).get("modification_suggestions", {}),
-            is_ai_reviewed=True,
-            is_manual_reviewed=False,
-            is_finalized=False
+        existing_review = await db.execute(
+            select(ContractReview).where(
+                ContractReview.contract_id == contract.id
+            ).order_by(desc(ContractReview.id)).limit(1)
         )
-        
-        db.add(review_record)
+        existing_review = existing_review.scalar_one_or_none()
+
+        ai_review_result = ai_review_result.get("review_result", {})
+
+        if existing_review:
+            # 更新现有记录
+            existing_review.ai_review_result = ai_review_result
+            existing_review.risk_points = ai_review_result.get("specific_risks", [])
+            existing_review.suggestions = ai_review_result.get("modification_suggestions", {})
+            existing_review.is_ai_reviewed = True
+            existing_review.ai_reviewed_at = func.now()
+            review_record = existing_review
+        else:
+            # 创建新记录
+            review_record = ContractReview(
+                contract_id=contract.id,
+                user_id=contract.user_id,
+                ai_review_result=ai_review_result,
+                risk_points=ai_review_result.get("specific_risks", []),
+                suggestions=ai_review_result.get("modification_suggestions", {}),
+                is_ai_reviewed=True,
+                is_manual_reviewed=False,
+                is_finalized=False
+            )
+            db.add(review_record)
         await db.commit()
-        
+        # 提交后刷新合同，避免 from_orm 在同步上下文触发惰性加载（MissingGreenlet）
+        await db.refresh(contract)
+
         return {
             "message": "AI审核完成",
             "risk_score": contract.risk_score,

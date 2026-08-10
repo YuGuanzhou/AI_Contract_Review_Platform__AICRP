@@ -11,6 +11,24 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+def _risk_get(risk: Dict, *keys, default=""):
+    """从风险点字典中兼容读取中英文 key（AI 可能返回 中文 key 或 英文 key）"""
+    for k in keys:
+        if k in risk:
+            return risk[k]
+    return default
+
+
+def _normalize_risk_level(level: str) -> str:
+    """将风险等级规范化为 low/medium/high（兼容 中文值 与 英文值）"""
+    level = str(level or "").strip().lower()
+    if level in ("高", "高风险", "high", "danger", "critical"):
+        return "high"
+    if level in ("低", "低风险", "low", "success", "safe"):
+        return "low"
+    return "medium"
+
 # AI 服务不可用时使用的模拟审核数据（开发/降级模式）
 MOCK_REVIEW_JSON = {
     "basic_info": {
@@ -264,7 +282,7 @@ class AIService:
             # 从具体风险点计算
             specific_risks = review_result.get("specific_risks", [])
             for risk in specific_risks:
-                risk_level = risk.get("risk_level", "medium")
+                risk_level = _normalize_risk_level(_risk_get(risk, "风险等级", "risk_level", default="medium"))
                 if risk_level == "high":
                     risk_score += 10
                 elif risk_level == "medium":
@@ -301,13 +319,13 @@ class AIService:
         """生成审核摘要"""
         try:
             specific_risks = review_result.get("specific_risks", [])
-            high_risks = [r for r in specific_risks if r.get("risk_level") == "high"]
-            medium_risks = [r for r in specific_risks if r.get("risk_level") == "medium"]
+            high_risks = [r for r in specific_risks if _normalize_risk_level(_risk_get(r, "风险等级", "risk_level", default="")) == "high"]
+            medium_risks = [r for r in specific_risks if _normalize_risk_level(_risk_get(r, "风险等级", "risk_level", default="")) == "medium"]
             
             summary = f"发现 {len(high_risks)} 个高风险点，{len(medium_risks)} 个中风险点。"
             
             if high_risks:
-                summary += f" 高风险包括：{', '.join([r.get('risk_description', '')[:50] for r in high_risks[:3]])}"
+                summary += f" 高风险包括：{', '.join([_risk_get(r, '风险描述', 'risk_description', 'description', default='')[:50] for r in high_risks[:3]])}"
             
             return summary
             

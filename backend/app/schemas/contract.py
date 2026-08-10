@@ -114,7 +114,7 @@ class ContractReviewResponse(BaseModel):
     
     # 风险点
     risk_points: Optional[List[Dict[str, Any]]]
-    suggestions: Optional[List[Dict[str, Any]]]
+    suggestions: Optional[Dict[str, Any]]
     
     # 审核状态
     is_ai_reviewed: bool
@@ -135,7 +135,7 @@ class ContractReviewCreateRequest(BaseModel):
     """合同审核创建请求"""
     manual_review_result: Optional[Dict[str, Any]] = None
     risk_points: Optional[List[Dict[str, Any]]] = None
-    suggestions: Optional[List[Dict[str, Any]]] = None
+    suggestions: Optional[Dict[str, Any]] = None
     risk_score: Optional[float] = Field(None, ge=0, le=100)
     risk_level: Optional[str] = Field(None, max_length=20)
     review_summary: Optional[str] = Field(None, max_length=2000)
@@ -145,7 +145,7 @@ class ContractReviewUpdateRequest(BaseModel):
     """合同审核更新请求"""
     manual_review_result: Optional[Dict[str, Any]] = None
     risk_points: Optional[List[Dict[str, Any]]] = None
-    suggestions: Optional[List[Dict[str, Any]]] = None
+    suggestions: Optional[Dict[str, Any]] = None
     is_finalized: Optional[bool] = None
 
 
