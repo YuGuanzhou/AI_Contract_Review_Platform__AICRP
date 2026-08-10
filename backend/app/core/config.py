@@ -70,6 +70,20 @@ class Settings(BaseSettings):
     # 任务队列配置
     CELERY_BROKER_URL: str = "redis://:12345678@localhost:6379/1"
     CELERY_RESULT_BACKEND: str = "redis://:12345678@localhost:6379/2"
+
+    # 邮件配置（忘记密码等通知使用；未配置时相关功能降级为开发模式）
+    SMTP_HOST: Optional[str] = None
+    SMTP_PORT: int = 587
+    SMTP_USER: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    SMTP_FROM: Optional[str] = None
+    SMTP_TLS: bool = True
+
+    # 前端地址（用于拼接待重置密码链接）
+    FRONTEND_BASE_URL: str = "http://localhost:5173"
+
+    # 密码重置令牌有效期（分钟）
+    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 30
     
     class Config:
         # 使用绝对路径定位 .env，避免受启动时工作目录影响

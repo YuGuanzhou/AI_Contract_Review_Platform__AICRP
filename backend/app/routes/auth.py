@@ -2,10 +2,13 @@
 认证相关路由
 """
 from datetime import timedelta
-from typing import Any
+from typing import Any, Optional
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.database import get_db
@@ -14,6 +17,8 @@ from app.core.security import (
     create_access_token,
     create_refresh_token,
     verify_refresh_token,
+    verify_token,
+    create_password_reset_token,
     get_password_hash,
     get_current_user_dependency,
 )
@@ -26,9 +31,52 @@ from app.schemas.auth import (
     UserResponse,
     UserUpdateRequest,
     UserRoleUpdateRequest,
+    ForgotPasswordRequest,
+    ResetPasswordRequest,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+
+def _send_reset_email(email: str, reset_link: str) -> bool:
+    """
+    发送密码重置邮件。
+    成功返回 True；SMTP 未配置或发送失败返回 False（由调用方降级为开发模式）。
+    """
+    host = settings.SMTP_HOST
+    if not host:
+        logger.warning("SMTP_HOST 未配置，跳过邮件发送")
+        return False
+
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.header import Header
+
+        body = (
+            f"您好：\n\n"
+            f"我们收到了您在 {settings.APP_NAME} 上发起的密码重置请求。\n"
+            f"请在 {settings.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES} 分钟内点击以下链接重置密码：\n\n"
+            f"{reset_link}\n\n"
+            f"如非您本人操作，请忽略此邮件，并确保账户安全。"
+        )
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["Subject"] = Header(f"{settings.APP_NAME} - 密码重置", "utf-8")
+        msg["From"] = settings.SMTP_FROM or settings.SMTP_USER or "noreply@localhost"
+        msg["To"] = email
+
+        with smtplib.SMTP(host, settings.SMTP_PORT, timeout=10) as server:
+            if settings.SMTP_TLS:
+                server.starttls()
+            if settings.SMTP_USER:
+                server.login(settings.SMTP_USER, settings.SMTP_PASSWORD or "")
+            server.sendmail(msg["From"], [email], msg.as_string())
+        return True
+    except Exception as e:
+        logger.error(f"发送重置邮件失败: {e}")
+        return False
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -193,6 +241,88 @@ async def logout():
     注意：JWT是无状态的，客户端需要删除本地存储的令牌
     """
     return {"message": "登出成功"}
+
+
+@router.post("/forgot-password")
+async def forgot_password(
+    request: ForgotPasswordRequest,
+    db = Depends(get_db)
+):
+    """
+    忘记密码：发送密码重置链接
+
+    安全性说明：
+    - 无论邮箱是否存在都返回相同的成功提示，防止通过接口探测已注册邮箱
+    - 未配置 SMTP 时降级为开发模式：重置链接写入日志并在响应中返回，便于本地测试
+    """
+    stmt = select(User).where(User.email == request.email)
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
+
+    # 统一提示，防止用户枚举
+    if not user:
+        return {"message": "如果该邮箱已注册，我们已发送密码重置链接，请查收"}
+
+    token = create_password_reset_token(user.email, user.id)
+    reset_link = f"{settings.FRONTEND_BASE_URL}/reset-password?token={token}"
+
+    sent = _send_reset_email(user.email, reset_link)
+
+    if not sent:
+        # 开发模式降级：方便本地测试
+        logger.warning(f"邮件服务不可用，密码重置链接（开发模式）: {reset_link}")
+        return {
+            "message": "当前未配置邮件服务，以下为开发模式重置链接（生产环境请配置 SMTP）",
+            "dev_mode": True,
+            "reset_link": reset_link,
+            "reset_token": token,
+        }
+
+    return {"message": "密码重置邮件已发送，请查收"}
+
+
+@router.get("/verify-reset-token/{token}")
+async def verify_reset_token(token: str):
+    """
+    验证密码重置令牌是否有效
+    """
+    payload = verify_token(token, "reset")
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="重置链接无效或已过期",
+        )
+
+    return {"valid": True, "email": payload.get("sub")}
+
+
+@router.post("/reset-password")
+async def reset_password(
+    request: ResetPasswordRequest,
+    db = Depends(get_db)
+):
+    """
+    使用重置令牌设置新密码
+    """
+    payload = verify_token(request.token, "reset")
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="重置链接无效或已过期",
+        )
+
+    user_id = payload.get("user_id")
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="用户不存在",
+        )
+
+    user.hashed_password = get_password_hash(request.new_password)
+    await db.commit()
+
+    return {"message": "密码重置成功，请使用新密码登录"}
 
 
 @router.get("/me", response_model=UserResponse)

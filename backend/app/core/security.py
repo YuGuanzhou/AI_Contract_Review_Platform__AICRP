@@ -136,6 +136,23 @@ def verify_refresh_token(token: str) -> Optional[Dict[str, Any]]:
     return verify_token(token, "refresh")
 
 
+def create_password_reset_token(email: str, user_id: int) -> str:
+    """创建密码重置令牌（有效期由 PASSWORD_RESET_TOKEN_EXPIRE_MINUTES 控制）"""
+    expire = datetime.utcnow() + timedelta(minutes=settings.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES)
+    payload = {
+        "sub": email,
+        "user_id": user_id,
+        "type": "reset",
+        "exp": expire,
+    }
+    encoded_jwt = jwt.encode(
+        payload,
+        settings.JWT_SECRET_KEY,
+        algorithm=settings.JWT_ALGORITHM
+    )
+    return encoded_jwt
+
+
 async def get_current_user(
     token: str,
     db  # 移除AsyncSession类型注解

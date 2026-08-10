@@ -72,7 +72,7 @@
             <el-form-item>
               <div class="login-options">
                 <el-checkbox v-model="rememberMe">记住我</el-checkbox>
-                <el-link type="primary" :underline="false">忘记密码？</el-link>
+                <el-link type="primary" :underline="false" @click="goToForgotPassword">忘记密码？</el-link>
               </div>
             </el-form-item>
             
@@ -168,6 +168,11 @@ const handleLogin = async () => {
 // 跳转到注册页面
 const goToRegister = () => {
   router.push('/register')
+}
+
+// 跳转到忘记密码页面
+const goToForgotPassword = () => {
+  router.push('/forgot-password')
 }
 
 // 页面加载时检查记住我
