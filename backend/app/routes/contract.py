@@ -6,6 +6,7 @@ import os
 import hashlib
 import logging
 from io import BytesIO
+from datetime import datetime, timedelta
 from typing import List, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from fastapi.responses import FileResponse
@@ -23,6 +24,7 @@ from app.schemas.contract import (
     ContractUpdateRequest,
     ContractListResponse,
     ContractUploadResponse,
+    ContractStatsResponse,
 )
 from app.services.file_service import FileService
 from app.services.parser_service import ParserService
@@ -31,6 +33,74 @@ from app.services.contract_processing_service import ContractProcessingService
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# 注意：/stats 必须声明在 /{contract_id} 之前，否则会被 path 参数捕获导致 422
+@router.get("/stats", response_model=ContractStatsResponse)
+async def get_contract_stats(
+    current_user: User = Depends(get_current_user_dependency),
+    db = Depends(get_db),
+):
+    """
+    获取合同统计信息
+    普通用户统计自己的合同，管理员/审核员统计全部合同
+    """
+    # 权限过滤：非管理员/审核员只看自己的合同
+    own = []
+    if current_user.role not in ["admin", "superadmin", "reviewer"]:
+        own.append(Contract.user_id == current_user.id)
+
+    total = await db.scalar(select(func.count()).select_from(Contract).where(*own)) or 0
+
+    pending = await db.scalar(
+        select(func.count()).select_from(Contract).where(
+            Contract.status.in_([
+                ContractStatus.AI_PENDING,
+                ContractStatus.AI_REVIEWED,
+                ContractStatus.MANUAL_PENDING,
+            ]),
+            *own
+        )
+    ) or 0
+
+    approved = await db.scalar(
+        select(func.count()).select_from(Contract).where(
+            Contract.status == ContractStatus.REVIEWED,
+            *own
+        )
+    ) or 0
+
+    high_risk = await db.scalar(
+        select(func.count()).select_from(Contract).where(
+            Contract.risk_level == "high",
+            *own
+        )
+    ) or 0
+
+    avg_score = await db.scalar(
+        select(func.avg(Contract.risk_score)).where(
+            Contract.risk_score.isnot(None),
+            *own
+        )
+    ) or 0.0
+
+    # 最近 7 天上传
+    cutoff = datetime.now() - timedelta(days=7)
+    recent = await db.scalar(
+        select(func.count()).select_from(Contract).where(
+            Contract.uploaded_at >= cutoff,
+            *own
+        )
+    ) or 0
+
+    return ContractStatsResponse(
+        total_contracts=total,
+        pending_reviews=pending,
+        approved_contracts=approved,
+        high_risk_contracts=high_risk,
+        avg_risk_score=round(float(avg_score), 1),
+        recent_contracts=recent,
+    )
 
 
 @router.get("/", response_model=ContractListResponse)

@@ -91,11 +91,11 @@
           <el-empty v-else description="暂无AI分析结果" :image-size="100" />
         </div>
 
-        <div class="review-history" v-if="contract.reviews && contract.reviews.length > 0">
+        <div class="review-history" v-if="reviewTimeline.length > 0">
           <h4>审核记录</h4>
           <el-timeline>
             <el-timeline-item
-              v-for="review in contract.reviews"
+              v-for="review in reviewTimeline"
               :key="review.id"
               :timestamp="review.time"
               placement="top"
@@ -117,28 +117,30 @@ import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Document } from '@element-plus/icons-vue'
 import PdfPreviewSimpleFixed from '@/components/PdfPreviewSimpleFixed.vue'
-import { getContract } from '@/api/contract'
+import { getContract, getContractReviews } from '@/api/contract'
 import { startReview } from '@/api/reviewer'
-import type { Contract } from '@/api/contract'
+import type { Contract, ContractReviewRecord } from '@/api/contract'
 import { ElMessage } from 'element-plus'
 
 const route = useRoute()
 const router = useRouter()
 
 // 合同详情数据
+// 审核时间线条目
+interface TimelineItem {
+  id: number
+  reviewer: string
+  action: string
+  time: string
+  comment: string
+}
+
 const contract = ref<Contract & {
   // 前端额外字段
   uploadTime?: string
   uploadUser?: string
   fileSizeFormatted?: string
   aiAnalysis?: string
-  reviews?: Array<{
-    id: number
-    reviewer: string
-    action: string
-    time: string
-    comment: string
-  }>
 }>({
   id: 0,
   user_id: 0,
@@ -166,9 +168,11 @@ const contract = ref<Contract & {
   uploadTime: '',
   uploadUser: 'AI',
   fileSizeFormatted: '0 B',
-  aiAnalysis: '',
-  reviews: []
+  aiAnalysis: ''
 })
+
+// 审核时间线（由审核记录动态生成）
+const reviewTimeline = ref<TimelineItem[]>([])
 
 // 加载状态
 const loading = ref(false)
@@ -273,15 +277,56 @@ const riskLevelText = (level: string | null | undefined): string => {
   return map[level || ''] || level || '未知'
 }
 
+// 由审核记录构建时间线（一条记录可能同时含 AI 与人工审核）
+const buildReviewTimeline = (reviews: ContractReviewRecord[]): TimelineItem[] => {
+  const items: TimelineItem[] = []
+  for (const r of reviews) {
+    if (r.is_ai_reviewed) {
+      const riskCount = Array.isArray(r.risk_points) ? r.risk_points.length : 0
+      const overall = r.ai_review_result?.overall_evaluation
+      let comment = riskCount ? `发现 ${riskCount} 个风险点` : 'AI 审核完成'
+      if (typeof overall === 'string' && overall) comment = overall
+      else if (overall && typeof overall === 'object') {
+        const text = (overall as any).text || (overall as any).评价
+        if (typeof text === 'string' && text) comment = text
+      }
+      items.push({
+        id: r.id,
+        reviewer: 'AI智能审核',
+        action: 'AI 审核完成',
+        time: formatDateTime(r.ai_reviewed_at),
+        comment
+      })
+    }
+    if (r.is_manual_reviewed) {
+      const manual = r.manual_review_result || {}
+      const resultMap: Record<string, string> = {
+        approved: '通过',
+        rejected: '驳回',
+        needs_revision: '需修改'
+      }
+      const resultLabel = resultMap[manual.result] || manual.result || '完成'
+      items.push({
+        id: r.id,
+        reviewer: '人工审核',
+        action: `人工审核 - ${resultLabel}`,
+        time: formatDateTime(r.manual_reviewed_at),
+        comment: manual.comments || '人工审核完成'
+      })
+    }
+  }
+  return items
+}
+
 // 获取合同详情
 const fetchContractDetail = async () => {
   const id = route.params.id
   if (!id) return
-  
+
   loading.value = true
   try {
     const contractData = await getContract(Number(id))
-    
+
     // 更新合同数据
     contract.value = {
       ...contractData,
@@ -289,8 +334,16 @@ const fetchContractDetail = async () => {
       uploadTime: formatDateTime(contractData.uploaded_at),
       uploadUser: `用户${contractData.user_id}`,
       fileSizeFormatted: formatFileSize(contractData.file_size),
-      aiAnalysis: contractData.review_summary || '<p>暂无AI分析结果</p>',
-      reviews: [] // 暂时留空，后续可以从审核记录API获取
+      aiAnalysis: contractData.review_summary || '<p>暂无AI分析结果</p>'
+    }
+
+    // 加载审核记录（失败不影响合同详情展示）
+    try {
+      const reviewData = await getContractReviews(Number(id))
+      reviewTimeline.value = buildReviewTimeline(reviewData.reviews || [])
+    } catch (e: any) {
+      console.warn('加载审核记录失败:', e)
+      reviewTimeline.value = []
     }
   } catch (error: any) {
     console.error('获取合同详情失败:', error)

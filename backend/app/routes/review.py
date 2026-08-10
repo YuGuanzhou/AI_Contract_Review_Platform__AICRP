@@ -4,7 +4,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, func, text
 
 from app.core.database import get_db
 from app.core.security import get_current_active_user
@@ -18,7 +18,7 @@ from app.schemas.contract import (
     AIReviewRequest,
     AIReviewResponse,
 )
-from app.services.ai_service import ai_service
+from app.services.ai_review_service import run_ai_review
 
 router = APIRouter()
 
@@ -222,8 +222,8 @@ async def update_contract_review(
             detail="审核记录不存在"
         )
     
-    # 检查权限（只有创建者或管理员可以修改）
-    if review.user_id != current_user.id and current_user.role != "admin":
+    # 检查权限（审核员与管理员可修改，与其他端点权限规则一致）
+    if review.user_id != current_user.id and current_user.role not in ["admin", "reviewer"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="无权修改此审核记录"
@@ -257,84 +257,43 @@ async def ai_review_contract(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="合同不存在"
         )
-    
+
     # 检查权限
     if contract.user_id != current_user.id and current_user.role not in ["admin", "reviewer"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="无权审核此合同"
         )
-    
+
     # 检查合同是否有解析内容
     if not contract.parsed_text:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="合同尚未解析，请先解析合同"
         )
-    
+
     try:
-        # 调用 AI 服务审核合同
-        ai_result = await ai_service.review_contract(
-            contract_text=contract.parsed_text,
-            contract_type=contract.contract_type.value
-        )
-        
-        if not ai_result.get("success", False):
+        # 统一 AI 审核流程（幂等落库 + 状态流转到 MANUAL_PENDING）
+        result = await run_ai_review(db, contract, current_user.id)
+        if not result["success"]:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"AI 审核失败: {ai_result.get('error', '未知错误')}"
+                detail=f"AI 审核失败: {result['error']}"
             )
-        
-        # 创建或更新审核记录（复用该合同最新一条记录，避免与后台自动审核记录重复）
-        existing_review = await db.execute(
-            select(ContractReview).where(
-                ContractReview.contract_id == contract_id
-            ).order_by(desc(ContractReview.id)).limit(1)
-        )
-        existing_review = existing_review.scalar_one_or_none()
 
-        if existing_review:
-            # 更新现有记录
-            existing_review.ai_review_result = ai_result.get("review_result")
-            existing_review.risk_points = ai_result.get("review_result", {}).get("specific_risks", [])
-            existing_review.is_ai_reviewed = True
-            existing_review.ai_reviewed_at = func.now() if hasattr(func, 'now') else None
-            review = existing_review
-        else:
-            # 创建新记录
-            review = ContractReview(
-                contract_id=contract_id,
-                user_id=current_user.id,
-                ai_review_result=ai_result.get("review_result"),
-                risk_points=ai_result.get("review_result", {}).get("specific_risks", []),
-                is_ai_reviewed=True,
-                ai_reviewed_at=func.now() if hasattr(func, 'now') else None
-            )
-            db.add(review)
-
-        # 更新合同风险信息
-        contract.risk_score = ai_result.get("risk_score", 0)
-        contract.risk_level = ai_result.get("risk_level", "unknown")
-        contract.review_summary = ai_result.get("summary", "")
-
-        # AI 审核完成后流转到人工审核队列
-        if contract.status in (ContractStatus.PARSED, ContractStatus.AI_PENDING, ContractStatus.AI_REVIEWED):
-            contract.status = ContractStatus.MANUAL_PENDING
-        contract.reviewed_at = func.now() if hasattr(func, 'now') else None
-        
-        await db.commit()
-        await db.refresh(review)
-        
+        ai_result = result["ai_result"]
         return AIReviewResponse(
             success=True,
-            review_id=review.id,
+            review_id=result["review"].id,
             risk_score=ai_result.get("risk_score", 0),
             risk_level=ai_result.get("risk_level", "unknown"),
             summary=ai_result.get("summary", ""),
             review_result=ai_result.get("review_result", {}),
             message="AI 审核完成"
         )
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -360,8 +319,8 @@ async def finalize_contract_review(
             detail="审核记录不存在"
         )
     
-    # 检查权限
-    if review.user_id != current_user.id and current_user.role != "admin":
+    # 检查权限（审核员与管理员可确认，与其他端点权限规则一致）
+    if review.user_id != current_user.id and current_user.role not in ["admin", "reviewer"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="无权确认此审核结果"
@@ -464,7 +423,3 @@ async def get_risk_distribution(
         "distribution": distribution,
         "total": sum(item["count"] for item in distribution)
     }
-
-
-# 导入必要的函数
-from sqlalchemy.sql import func, text

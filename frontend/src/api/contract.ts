@@ -115,6 +115,33 @@ export interface SubmitReviewPayload {
   review_summary?: string
 }
 
+// 合同审核记录
+export interface ContractReviewRecord {
+  id: number
+  contract_id: number
+  user_id: number
+  ai_review_result: any | null
+  manual_review_result: any | null
+  final_review_result: any | null
+  risk_points: any[] | null
+  suggestions: any | null
+  is_ai_reviewed: boolean
+  is_manual_reviewed: boolean
+  is_finalized: boolean
+  created_at: string
+  ai_reviewed_at: string | null
+  manual_reviewed_at: string | null
+  finalized_at: string | null
+}
+
+// 合同审核记录列表响应
+export interface ContractReviewListResponse {
+  reviews: ContractReviewRecord[]
+  total: number
+  skip: number
+  limit: number
+}
+
 // 解析合同
 export const parseContract = async (id: number): Promise<any> => {
   return request.post(`/contracts/${id}/parse`)
@@ -135,6 +162,15 @@ export const submitContractReview = async (id: number, data: SubmitReviewPayload
   return request.post(`/contracts/${id}/review`, data)
 }
 
+// 获取合同审核记录列表
+export const getContractReviews = async (
+  id: number,
+  skip: number = 0,
+  limit: number = 10
+): Promise<ContractReviewListResponse> => {
+  return request.get<ContractReviewListResponse>(`/contracts/${id}/reviews`, { params: { skip, limit } })
+}
+
 // 导入用户合同API
 import userContractApi from './userContract'
 
@@ -151,6 +187,7 @@ export const contractApi = {
   getContractReviewDetails,
   triggerAiReview,
   submitContractReview,
+  getContractReviews,
   
   // 来自userContract模块的方法
   getUserStats: userContractApi.getUserStats,

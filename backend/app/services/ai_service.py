@@ -29,6 +29,92 @@ def _normalize_risk_level(level: str) -> str:
         return "low"
     return "medium"
 
+
+def _pick(container: Dict, *keys, default=""):
+    """返回第一个非空的值（AI 返回的中文/英文 key 不稳定，需兼容）"""
+    if not isinstance(container, dict):
+        return default
+    for k in keys:
+        v = container.get(k)
+        if v is not None and str(v).strip() != "":
+            return v
+    return default
+
+
+def _normalize_specific_risk(risk: Any) -> Any:
+    """归一化单个风险点字段（中英文 key → canonical 英文）"""
+    if not isinstance(risk, dict):
+        return risk
+    return {
+        "risk_level": _normalize_risk_level(_pick(risk, "风险等级", "risk_level", "severity", default="medium")),
+        "clause_location": _pick(risk, "条款位置", "clause_location", "clause_reference", "clause"),
+        "risk_description": _pick(risk, "风险描述", "risk_description", "description", "risk"),
+        "modification_suggestion": _pick(risk, "修改建议", "modification_suggestion", "suggestion"),
+    }
+
+
+def _normalize_modification_suggestions(mod: Any) -> Any:
+    """归一化修改建议（must_modify / suggested_optimization / notes）"""
+    if not isinstance(mod, dict):
+        return mod
+    return {
+        "must_modify": _pick(mod, "必须修改项", "must_modify", default=[]),
+        "suggested_optimization": _pick(mod, "建议优化项", "suggested_optimization", "suggest_optimize", default=[]),
+        "notes": _pick(mod, "注意事项", "notes", default=[]),
+    }
+
+
+def _normalize_basic_info(info: Any) -> Any:
+    """归一化基本信息（contract_type / main_parties / contract_subject）"""
+    if not isinstance(info, dict):
+        return info
+    return {
+        "contract_type": _pick(info, "合同类型", "contract_type"),
+        "main_parties": _pick(info, "主要当事人", "main_parties", "parties"),
+        "contract_subject": _pick(info, "合同标的", "contract_subject", "subject"),
+    }
+
+
+# 关键条款 中文 key → canonical 英文 key
+CLAUSE_KEY_MAP = {
+    "权利义务条款": "rights_obligations",
+    "权利与义务": "rights_obligations",
+    "付款条款": "payment_terms",
+    "支付条款": "payment_terms",
+    "违约责任": "breach_liability",
+    "违约条款": "breach_liability",
+    "争议解决": "dispute_resolution",
+    "争议解决条款": "dispute_resolution",
+    "保密条款": "confidentiality",
+    "知识产权": "intellectual_property",
+}
+
+
+def _normalize_review_result(result: Any) -> Any:
+    """
+    将 AI 返回的审核结果归一化为稳定的 canonical 英文结构。
+
+    AI 输出 key 不稳定（DeepSeek 可能返回中文 key 或英文 key，且英文 key 有
+    变体，如 suggested_optimization / suggest_optimize）。统一归一化后，
+    下游（评分、摘要、存储、前端渲染）只面对一套稳定的结构。
+    """
+    if not isinstance(result, dict):
+        return result
+    result = dict(result)
+    if isinstance(result.get("specific_risks"), list):
+        result["specific_risks"] = [_normalize_specific_risk(r) for r in result["specific_risks"]]
+    if "modification_suggestions" in result:
+        result["modification_suggestions"] = _normalize_modification_suggestions(result["modification_suggestions"])
+    if "basic_info" in result:
+        result["basic_info"] = _normalize_basic_info(result["basic_info"])
+    if isinstance(result.get("key_clauses"), dict):
+        clauses = {}
+        for k, v in result["key_clauses"].items():
+            clauses[CLAUSE_KEY_MAP.get(k, k)] = v
+        result["key_clauses"] = clauses
+    return result
+
+
 # AI 服务不可用时使用的模拟审核数据（开发/降级模式）
 MOCK_REVIEW_JSON = {
     "basic_info": {
@@ -133,7 +219,10 @@ class AIService:
             
             # 解析响应
             review_result = self._parse_ai_response(response)
-            
+
+            # 归一化为 canonical 结构（兼容中英文 key）
+            review_result = _normalize_review_result(review_result)
+
             # 计算风险评分
             risk_score = self._calculate_risk_score(review_result)
             risk_level = self._determine_risk_level(risk_score)
