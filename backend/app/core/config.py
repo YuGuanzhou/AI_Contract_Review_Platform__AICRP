@@ -3,7 +3,11 @@
 """
 from pydantic_settings import BaseSettings
 from typing import List, Optional
+from pathlib import Path
 import os
+
+# 项目根目录（本文件位于 backend/app/core/ 下，向上四级）
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 
 class Settings(BaseSettings):
@@ -13,7 +17,8 @@ class Settings(BaseSettings):
     APP_NAME: str = "中小企业智能合同审查平台"
     DEBUG: bool = True
     HOST: str = "0.0.0.0"
-    PORT: int = 8000
+    # 使用 8001 而非 8000，避免与其他常用服务（如求职助手等）端口冲突
+    PORT: int = 8001
     
     # 数据库配置（真实密码通过 .env 的 DATABASE_URL 注入，禁止硬编码）
     DATABASE_URL: str = "mysql+aiomysql://root:your-database-password@localhost:3306/contract_db"
@@ -67,7 +72,8 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://:12345678@localhost:6379/2"
     
     class Config:
-        env_file = ".env"
+        # 使用绝对路径定位 .env，避免受启动时工作目录影响
+        env_file = str(PROJECT_ROOT / ".env")
         case_sensitive = True
 
 

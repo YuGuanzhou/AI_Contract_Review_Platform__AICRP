@@ -102,14 +102,14 @@ source venv/bin/activate
 # 安装依赖
 pip install -r requirements.txt
 
-# 启动服务（默认 http://localhost:8000）
+# 启动服务（默认 http://localhost:8001）
 python main.py
 # 或：uvicorn main:app --reload
 ```
 
 启动后：
-- API 文档（调试模式开启）：http://localhost:8000/docs
-- 健康检查：http://localhost:8000/health
+- API 文档（调试模式开启）：http://localhost:8001/docs
+- 健康检查：http://localhost:8001/health
 
 ### 4. 启动前端
 
@@ -142,8 +142,8 @@ npm run dev
 
 启动后端后，浏览器访问以下地址查看交互式 API 文档：
 
-- Swagger UI：`http://localhost:8000/docs`
-- ReDoc：`http://localhost:8000/redoc`
+- Swagger UI：`http://localhost:8001/docs`
+- ReDoc：`http://localhost:8001/redoc`
 
 主要接口模块（前缀 `/api/v1`）：
 

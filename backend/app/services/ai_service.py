@@ -11,13 +11,72 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# AI 服务不可用时使用的模拟审核数据（开发/降级模式）
+MOCK_REVIEW_JSON = {
+    "basic_info": {
+        "合同类型": "服务合同",
+        "主要当事人": "甲方：某某公司；乙方：某某个人",
+        "合同标的": "工作完成"
+    },
+    "key_clauses": {
+        "权利义务条款": "基本明确",
+        "付款条款": "支付金额10000元，时间未明确",
+        "违约责任": "违约金5000元，可能过高",
+        "争议解决": "仲裁条款有效",
+        "保密条款": "缺失",
+        "知识产权": "未约定"
+    },
+    "risk_identification": {
+        "高风险条款（红色）": ["违约责任可能过高", "保密条款缺失"],
+        "中风险条款（黄色）": ["付款时间不明确"],
+        "低风险条款（蓝色）": ["争议解决条款"]
+    },
+    "specific_risks": [
+        {
+            "条款位置": "第3条",
+            "风险描述": "违约金可能过高，不符合法律规定",
+            "风险等级": "high",
+            "修改建议": "建议将违约金调整至实际损失的30%以下"
+        },
+        {
+            "条款位置": "缺失",
+            "风险描述": "未包含保密条款",
+            "风险等级": "high",
+            "修改建议": "增加保密条款，明确保密义务和期限"
+        },
+        {
+            "条款位置": "第1条",
+            "风险描述": "付款时间未明确",
+            "风险等级": "medium",
+            "修改建议": "明确具体付款时间点"
+        }
+    ],
+    "overall_evaluation": {
+        "合同完整性": "一般",
+        "条款公平性": "基本公平",
+        "法律合规性": "部分条款需调整",
+        "商业合理性": "合理"
+    },
+    "modification_suggestions": {
+        "必须修改项": ["调整违约金条款", "增加保密条款"],
+        "建议优化项": ["明确付款时间"],
+        "注意事项": ["建议由法律专业人士最终审定"]
+    }
+}
+
 
 class AIService:
     """AI 审核服务基类"""
-    
+
     def __init__(self):
         self.provider = settings.AI_PROVIDER
-        self.client = self._create_client()
+        try:
+            self.client = self._create_client()
+        except Exception as e:
+            # 客户端创建失败（如缺少 API Key）时不阻断服务启动，
+            # 审核时自动降级为模拟数据
+            logger.warning(f"AI 客户端创建失败，将降级为模拟审核数据: {e}")
+            self.client = None
         
     def _create_client(self):
         """创建 AI 客户端"""
@@ -155,6 +214,10 @@ class AIService:
     
     async def _call_ai_model(self, prompt: str) -> str:
         """调用 AI 模型"""
+        if self.client is None:
+            logger.warning("AI 客户端不可用，返回模拟审核数据")
+            return json.dumps(MOCK_REVIEW_JSON, ensure_ascii=False)
+
         try:
             response = await self.client.chat.completions.create(
                 model="gpt-3.5-turbo" if self.provider == "openai" else "deepseek-chat",
@@ -166,67 +229,14 @@ class AIService:
                 max_tokens=4000,
                 response_format={"type": "json_object"}
             )
-            
+
             return response.choices[0].message.content
-            
+
         except Exception as e:
             logger.error(f"AI 模型调用失败: {e}")
             # 任何错误都返回模拟数据供开发测试
             logger.warning("AI 服务不可用，返回模拟审核数据")
-            # 模拟审核结果 JSON
-            mock_json = {
-                "basic_info": {
-                    "合同类型": "服务合同",
-                    "主要当事人": "甲方：某某公司；乙方：某某个人",
-                    "合同标的": "工作完成"
-                },
-                "key_clauses": {
-                    "权利义务条款": "基本明确",
-                    "付款条款": "支付金额10000元，时间未明确",
-                    "违约责任": "违约金5000元，可能过高",
-                    "争议解决": "仲裁条款有效",
-                    "保密条款": "缺失",
-                    "知识产权": "未约定"
-                },
-                "risk_identification": {
-                    "高风险条款（红色）": ["违约责任可能过高", "保密条款缺失"],
-                    "中风险条款（黄色）": ["付款时间不明确"],
-                    "低风险条款（蓝色）": ["争议解决条款"]
-                },
-                "specific_risks": [
-                    {
-                        "条款位置": "第3条",
-                        "风险描述": "违约金可能过高，不符合法律规定",
-                        "风险等级": "high",
-                        "修改建议": "建议将违约金调整至实际损失的30%以下"
-                    },
-                    {
-                        "条款位置": "缺失",
-                        "风险描述": "未包含保密条款",
-                        "风险等级": "high",
-                        "修改建议": "增加保密条款，明确保密义务和期限"
-                    },
-                    {
-                        "条款位置": "第1条",
-                        "风险描述": "付款时间未明确",
-                        "风险等级": "medium",
-                        "修改建议": "明确具体付款时间点"
-                    }
-                ],
-                "overall_evaluation": {
-                    "合同完整性": "一般",
-                    "条款公平性": "基本公平",
-                    "法律合规性": "部分条款需调整",
-                    "商业合理性": "合理"
-                },
-                "modification_suggestions": {
-                    "必须修改项": ["调整违约金条款", "增加保密条款"],
-                    "建议优化项": ["明确付款时间"],
-                    "注意事项": ["建议由法律专业人士最终审定"]
-                }
-            }
-            import json
-            return json.dumps(mock_json, ensure_ascii=False)
+            return json.dumps(MOCK_REVIEW_JSON, ensure_ascii=False)
     
     def _parse_ai_response(self, response: str) -> Dict[str, Any]:
         """解析 AI 响应"""
@@ -307,6 +317,9 @@ class AIService:
     
     async def generate_revision_suggestions(self, original_text: str, risk_points: List[Dict]) -> str:
         """生成修订建议"""
+        if self.client is None:
+            return "无法生成修订建议，请手动处理。"
+
         try:
             prompt = f"""请根据以下风险点，为合同文本提供具体的修订建议。
 
@@ -341,6 +354,12 @@ class AIService:
     
     async def compare_contracts(self, original_text: str, revised_text: str) -> Dict[str, Any]:
         """比较合同版本"""
+        if self.client is None:
+            return {
+                "success": False,
+                "error": "AI 客户端不可用"
+            }
+
         try:
             prompt = f"""请比较以下两个合同版本，分析主要变化和改进。
 
